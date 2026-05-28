@@ -1,0 +1,28 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+
+# Environment variables
+.env
+.env.local
+
+# Database files
+database/*.db
+database/*.db-shm
+database/*.db-wal
+
+# Uploaded/converted files
+files/
+
+# Logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+*.log
+
+# Editor
+.DS_Store
+.vscode/
+.idea/

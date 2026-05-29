@@ -44,6 +44,18 @@ jobs:
       - name: 安装依赖
         run: npm install
 
+      # lock 文件不在仓库中时（如首次生成或意外删除），自动提交回仓库
+      # 保证后续 Docker build 可以用 npm ci 锁定版本，确保镜像可复现
+      - name: 提交 lock 文件（如有变更）
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          if ! git diff --quiet package-lock.json 2>/dev/null || ! git ls-files --error-unmatch package-lock.json 2>/dev/null; then
+            git add package-lock.json
+            git commit -m "chore: regenerate package-lock.json on CI [skip ci]"
+            git push
+          fi
+
       - name: 类型检查
         run: npm run type-check
 

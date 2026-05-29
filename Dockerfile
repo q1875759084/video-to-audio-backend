@@ -3,6 +3,10 @@ FROM node:20-alpine AS builder
 
 WORKDIR /app
 
+# better-sqlite3 是原生 addon，需要 node-gyp 编译
+# alpine 最小镜像默认不含构建工具链，必须显式安装
+RUN apk add --no-cache python3 make g++
+
 COPY package.json package-lock.json ./
 RUN npm ci
 

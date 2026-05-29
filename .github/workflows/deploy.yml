@@ -31,6 +31,9 @@ jobs:
   ci:
     if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
+    # 允许 github-actions[bot] 写入仓库（用于自动提交 lock 文件）
+    permissions:
+      contents: write
 
     steps:
       - name: Checkout 代码

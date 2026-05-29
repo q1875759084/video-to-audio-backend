@@ -1,4 +1,4 @@
-import { spawn } from 'child_process';
+import { spawn, execFile } from 'child_process';
 import path from 'path';
 import fs from 'fs';
 import { getTaskTmpDir } from '../../utils/cleanup.js';
@@ -30,6 +30,92 @@ async function getKdlProxy(): Promise<string> {
   return `http://${proxyUser}:${proxyPass}@${ip}:${port}`;
 }
 
+/**
+ * 判断 URL 是否为需要代理解析的平台链接（B 站等），
+ * 直链文件（mp4/webm 等）无需代理可直接下载。
+ */
+function needsProxyExtract(url: string): boolean {
+  return /bilibili\.com|b23\.tv/i.test(url);
+}
+
+/**
+ * 用 yt-dlp -g 通过代理仅获取直链（不下载数据），
+ * 再用 wget 直连服务器下载，绕过代理带宽瓶颈。
+ *
+ * 背景：快代理独享代理带宽约 4 KB/s，直接 yt-dlp 下载极慢；
+ * B 站 CDN 直链对来源 IP 无限制，直连腾讯云可跑满带宽。
+ *
+ * B 站直链有效期约 10 分钟，需获取后立即下载。
+ */
+async function downloadViaDirect(
+  url: string,
+  proxy: string,
+  outputPath: string,
+  onProgress: (progress: YtdlpProgress) => void,
+): Promise<void> {
+  // Step 1: 通过代理获取真实 CDN 直链（-g 只输出 URL，不下载）
+  const directUrl = await new Promise<string>((resolve, reject) => {
+    execFile('yt-dlp', [
+      url,
+      '-g',
+      '--no-playlist',
+      '-f', 'bestaudio/best',
+      '--no-warnings',
+      '--proxy', proxy,
+      '--user-agent', 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+      '--add-header', 'Accept-Language:zh-CN,zh;q=0.9,en;q=0.8',
+    ], (err, stdout, stderr) => {
+      if (err) {
+        reject(new Error(`yt-dlp -g 失败: ${stderr || err.message}`));
+        return;
+      }
+      // -g 输出可能有多行（视频+音频分离流），取第一行
+      const link = stdout.trim().split('\n')[0];
+      if (!link) {
+        reject(new Error('yt-dlp -g 未返回直链'));
+        return;
+      }
+      resolve(link);
+    });
+  });
+
+  console.log('[ytdlp] 获取到直链，开始直连下载');
+
+  // Step 2: 直连下载（不走代理），上报进度
+  await new Promise<void>((resolve, reject) => {
+    // wget 的进度格式：... 45% 1.23MB/s
+    const proc = spawn('wget', [
+      '-O', outputPath,
+      '--no-verbose',
+      '--show-progress',
+      '--progress=dot:mega',
+      directUrl,
+    ]);
+
+    proc.stderr.on('data', (data: Buffer) => {
+      const text = data.toString();
+      // 解析 wget 进度：  45%  12.34M  1.23MB/s  eta 20s
+      const match = text.match(/(\d+)%/);
+      if (match) {
+        const percent = Math.min(100, parseInt(match[1], 10));
+        onProgress({ percent });
+      }
+    });
+
+    proc.on('close', (code) => {
+      if (code !== 0) {
+        reject(new Error(`wget 退出码 ${code}，直连下载失败`));
+      } else {
+        resolve();
+      }
+    });
+
+    proc.on('error', (err) => {
+      reject(new Error(`wget 启动失败: ${err.message}`));
+    });
+  });
+}
+
 export interface YtdlpProgress {
   percent: number;  // 0-100
 }
@@ -59,8 +145,20 @@ export async function downloadWithYtdlp(
   // 输出模板：统一命名为 source.%(ext)s
   const outputTemplate = path.join(tmpDir, 'source.%(ext)s');
 
-  // 动态获取当前有效的代理地址（IP 每天自然失效后快代理自动换新 IP）
-  const proxy = await getKdlProxy();
+  // B 站链接：两步走（代理获取直链 + 直连下载），避免代理带宽瓶颈（约 4 KB/s）
+  // 其他链接：yt-dlp 直接下载（无需代理）
+  if (needsProxyExtract(url)) {
+    const proxy = await getKdlProxy();
+    // B 站 bestaudio 通常为 m4a 格式，后续 ffmpeg 可直接处理
+    const outputPath = path.join(tmpDir, 'source.m4a');
+    await downloadViaDirect(url, proxy, outputPath, onProgress);
+
+    // 确认文件已生成（wget -O 固定命名，直接返回）
+    if (!fs.existsSync(outputPath) || fs.statSync(outputPath).size === 0) {
+      throw new Error('直连下载完成但文件不存在或为空');
+    }
+    return outputPath;
+  }
 
   return new Promise((resolve, reject) => {
     // yt-dlp 参数说明：
@@ -69,7 +167,6 @@ export async function downloadWithYtdlp(
     // --newline：每个进度更新单独一行，便于解析
     // --user-agent：伪装成真实浏览器，降低被平台识别为爬虫的风险
     // --add-header：补充 Accept-Language，模拟正常浏览器请求特征
-    // --proxy：国内运营商原生 IP（快代理独享纯生版），绕过 B 站对云服务商数据中心 IP 的 412 拦截
     const args = [
       url,
       '-o', outputTemplate,
@@ -79,7 +176,6 @@ export async function downloadWithYtdlp(
       '--no-warnings',
       '--user-agent', 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
       '--add-header', 'Accept-Language:zh-CN,zh;q=0.9,en;q=0.8',
-      '--proxy', proxy,
     ];
 
     const proc = spawn('yt-dlp', args);

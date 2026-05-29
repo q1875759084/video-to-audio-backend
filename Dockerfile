@@ -19,12 +19,13 @@ FROM node:20-alpine AS runner
 
 WORKDIR /app
 
-# 安装系统依赖：ffmpeg（转码）+ python3/pip（yt-dlp 依赖）
-RUN apk add --no-cache ffmpeg python3 py3-pip \
+# 安装系统依赖：ffmpeg（转码）+ python3/pip（yt-dlp 依赖）+ wget（B 站直链直连下载）
+RUN apk add --no-cache ffmpeg python3 py3-pip wget \
   && pip3 install --break-system-packages yt-dlp \
   # 验证安装成功
   && ffmpeg -version | head -1 \
-  && yt-dlp --version
+  && yt-dlp --version \
+  && wget --version | head -1
 
 # 只安装生产依赖
 # better-sqlite3 需要 node-gyp 编译，alpine 须先装构建工具链，装完删除以控制镜像体积

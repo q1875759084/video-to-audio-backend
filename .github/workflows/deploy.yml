@@ -42,9 +42,7 @@ jobs:
           node-version: '20'
 
       - name: 安装依赖
-        run: |
-          echo 'registry=https://registry.npmjs.org' > .npmrc
-          npm ci
+        run: npm install
 
       - name: 类型检查
         run: npm run type-check

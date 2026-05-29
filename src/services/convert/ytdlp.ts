@@ -37,6 +37,9 @@ export async function downloadWithYtdlp(
     // --no-playlist：只下载单个视频，不下载整个播放列表
     // -f bestaudio/best：优先下载最佳音频流，无音频则取最佳视频流（ffmpeg 后续提取音频）
     // --newline：每个进度更新单独一行，便于解析
+    // --user-agent：伪装成真实浏览器，降低被平台识别为爬虫的风险
+    // --referer：部分平台（如 B 站）校验 Referer，设置为平台域名可绕过
+    // --add-header：补充 Accept-Language，模拟正常浏览器请求特征
     const args = [
       url,
       '-o', outputTemplate,
@@ -44,6 +47,8 @@ export async function downloadWithYtdlp(
       '-f', 'bestaudio/best',
       '--newline',
       '--no-warnings',
+      '--user-agent', 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+      '--add-header', 'Accept-Language:zh-CN,zh;q=0.9,en;q=0.8',
     ];
 
     const proc = spawn('yt-dlp', args);

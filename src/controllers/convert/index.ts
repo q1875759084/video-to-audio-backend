@@ -6,7 +6,8 @@ import { v4 as uuidv4 } from 'uuid';
 import { submitUrlTask, submitUploadTask, registerSseClient, unregisterSseClient } from '../../services/convert/index.js';
 import { success, fail } from '../../utils/response.js';
 import { getUploadTmpDir } from '../../utils/cleanup.js';
-import { getTask } from '../../database/task/index.js';
+import { getTask, getTasksByIds } from '../../database/task/index.js';
+import { getActiveTaskIds } from '../../services/convert/queue.js';
 
 // multer 配置：分片上传，单片最大 10MB
 const chunkUpload = multer({
@@ -34,7 +35,20 @@ class ConvertController {
 
       success(res, { taskId }, '任务已提交');
     } catch (err: unknown) {
-      fail(res, 500, err instanceof Error ? err.message : '提交失败');
+      const msg = err instanceof Error ? err.message : '提交失败';
+      if (msg.includes('已有')) {
+        // 并发超限：带上该用户当前进行中的任务信息，便于前端展示「是什么任务在占用配额」
+        const activeIds = getActiveTaskIds(req.userId!);
+        const activeTasks = getTasksByIds(activeIds).map((t) => ({
+          taskId: t.id,
+          source: t.source,
+          type: t.type,
+          format: t.format,
+          status: t.status,
+        }));
+        return res.json({ code: 429, message: msg, data: { activeTasks } });
+      }
+      fail(res, 500, msg);
     }
   }
 
@@ -144,7 +158,19 @@ class ConvertController {
 
       success(res, { taskId }, '合并完成，转码任务已提交');
     } catch (err: unknown) {
-      fail(res, 500, err instanceof Error ? err.message : '合并失败');
+      const msg = err instanceof Error ? err.message : '合并失败';
+      if (msg.includes('已有')) {
+        const activeIds = getActiveTaskIds(req.userId!);
+        const activeTasks = getTasksByIds(activeIds).map((t) => ({
+          taskId: t.id,
+          source: t.source,
+          type: t.type,
+          format: t.format,
+          status: t.status,
+        }));
+        return res.json({ code: 429, message: msg, data: { activeTasks } });
+      }
+      fail(res, 500, msg);
     }
   }
 

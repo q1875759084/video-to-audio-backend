@@ -54,3 +54,15 @@ export function updateTaskStatus(
 export function getTask(taskId: string): TaskRow | undefined {
   return db.prepare('SELECT * FROM tasks WHERE id = ?').get(taskId) as TaskRow | undefined;
 }
+
+/**
+ * 根据 taskId 列表批量查询任务详情
+ * 用于 429 响应时告知前端「是什么任务在占用配额」
+ */
+export function getTasksByIds(taskIds: string[]): TaskRow[] {
+  if (taskIds.length === 0) return [];
+  const placeholders = taskIds.map(() => '?').join(',');
+  return db.prepare(
+    `SELECT * FROM tasks WHERE id IN (${placeholders}) ORDER BY created_at DESC`
+  ).all(...taskIds) as TaskRow[];
+}

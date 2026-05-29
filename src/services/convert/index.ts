@@ -7,6 +7,7 @@ import { convertToAudio, getAudioDuration, type OutputFormat } from './ffmpeg.js
 import { createTask, updateTaskStatus } from '../../database/task/index.js';
 import { createHistory } from '../../database/history/index.js';
 import { getFilePath, cleanupTmpDir, getTaskTmpDir, FILES_DIR } from '../../utils/cleanup.js';
+import { submitToQueue } from './queue.js';
 
 // ─── SSE 客户端管理 ──────────────────────────────────────────────────────────
 // Map<taskId, Set<Response>>：支持同一任务被多个客户端订阅（刷新页面场景）
@@ -57,89 +58,13 @@ function closeSSEClients(taskId: string): void {
 
 // ─── 转换任务核心流程 ─────────────────────────────────────────────────────────
 
-interface RunConvertOptions {
-  taskId: string;
-  userId: number;
-  source: string;        // URL 或原始文件名
-  inputPath: string;     // 已下载或已合并的输入文件路径
-  format: OutputFormat;
-  isUrlMode: boolean;    // true=URL模式（yt-dlp已下载），false=文件上传（直接输入）
-}
-
-/**
- * 执行转码主流程（URL 和文件上传模式共用）
- * 1. yt-dlp 下载（URL 模式）或直接使用上传文件
- * 2. ffmpeg 转码
- * 3. 写入历史记录
- * 4. SSE 推送完成事件
- */
-async function runConvert(opts: RunConvertOptions): Promise<void> {
-  const { taskId, userId, source, inputPath, format } = opts;
-  const fileId = uuidv4();
-  const outputPath = getFilePath(fileId, format);
-
-  // 确保输出目录存在
-  if (!fs.existsSync(FILES_DIR)) {
-    fs.mkdirSync(FILES_DIR, { recursive: true });
-  }
-
-  try {
-    updateTaskStatus(taskId, 'processing');
-
-    // ─── 转码阶段（进度 0-100）──────────────────────────────────────
-    await convertToAudio(
-      inputPath,
-      outputPath,
-      format,
-      (progress) => {
-        pushSSE(taskId, 'progress', {
-          percent: progress.percent,
-          stage: 'converting',
-        });
-      },
-    );
-
-    // 获取音频时长和文件大小
-    const [duration, stat] = await Promise.all([
-      getAudioDuration(outputPath),
-      Promise.resolve(fs.statSync(outputPath)),
-    ]);
-
-    // ─── 写入历史记录 ────────────────────────────────────────────────
-    createHistory({
-      user_id: userId,
-      task_id: taskId,
-      file_id: fileId,
-      original_name: source,
-      format,
-      file_size: stat.size,
-      duration,
-    });
-
-    updateTaskStatus(taskId, 'done', fileId);
-
-    // 推送完成事件
-    pushSSE(taskId, 'done', { fileId });
-    closeSSEClients(taskId);
-
-  } catch (err) {
-    const message = err instanceof Error ? err.message : '转换失败';
-    updateTaskStatus(taskId, 'error', undefined, message);
-    pushSSE(taskId, 'error', { message });
-    closeSSEClients(taskId);
-  } finally {
-    // 清理临时文件（yt-dlp 下载目录 或 分片合并临时文件）
-    cleanupTmpDir(getTaskTmpDir(taskId));
-  }
-}
-
-// ─── 对外暴露的入口 ──────────────────────────────────────────────────────────
-
 /**
  * 提交 URL 转换任务
  * 1. 创建 task 记录
- * 2. 异步启动 yt-dlp 下载 + ffmpeg 转码
- * 3. 立即返回 taskId（客户端随后连接 SSE 监听进度）
+ * 2. 通过队列调度执行（全局 MAX_CONCURRENT，单用户 MAX_PER_USER）
+ * 3. 立即返回 taskId（客户端随后连接 SSE 监听进度/排队状态）
+ *
+ * @throws 单用户并发超限时直接抛出，由 Controller 返回 429
  */
 export async function submitUrlTask(params: {
   userId: number;
@@ -156,75 +81,84 @@ export async function submitUrlTask(params: {
     format: params.format,
   });
 
-  // 异步执行，不阻塞响应
-  setImmediate(async () => {
-    const tmpDir = getTaskTmpDir(taskId);
+  submitToQueue({
+    taskId,
+    userId: params.userId,
+    onQueued: () => {
+      // 任务进入等待队列时，等待 SSE 客户端连接后推送排队状态
+      // 使用短暂延迟给前端建立 SSE 连接的时间
+      setTimeout(() => {
+        pushSSE(taskId, 'queued', { message: '任务已排队，等待执行...' });
+      }, 300);
+    },
+    run: async () => {
+      const tmpDir = getTaskTmpDir(taskId);
 
-    try {
-      // 先等待 SSE 客户端有机会连接（给前端约 200ms 建立 EventSource）
-      await new Promise((r) => setTimeout(r, 200));
+      try {
+        // 给前端约 200ms 建立 EventSource 连接
+        await new Promise((r) => setTimeout(r, 200));
 
-      // yt-dlp 下载（进度映射到 0-50%）
-      const downloadedPath = await downloadWithYtdlp(
-        params.url,
-        taskId,
-        (progress) => {
-          // 下载进度占总进度 0~50%
-          pushSSE(taskId, 'progress', {
-            percent: Math.floor(progress.percent / 2),
-            stage: 'downloading',
-          });
-        },
-      );
+        // yt-dlp 下载（进度映射到 0~50%）
+        const downloadedPath = await downloadWithYtdlp(
+          params.url,
+          taskId,
+          (progress) => {
+            pushSSE(taskId, 'progress', {
+              percent: Math.floor(progress.percent / 2),
+              stage: 'downloading',
+            });
+          },
+        );
 
-      // ffmpeg 转码（进度映射到 50-100%）
-      const fileId = uuidv4();
-      const outputPath = getFilePath(fileId, params.format);
-      if (!fs.existsSync(FILES_DIR)) {
-        fs.mkdirSync(FILES_DIR, { recursive: true });
+        // ffmpeg 转码（进度映射到 50~100%）
+        const fileId = uuidv4();
+        const outputPath = getFilePath(fileId, params.format);
+        if (!fs.existsSync(FILES_DIR)) {
+          fs.mkdirSync(FILES_DIR, { recursive: true });
+        }
+
+        updateTaskStatus(taskId, 'processing');
+
+        await convertToAudio(
+          downloadedPath,
+          outputPath,
+          params.format,
+          (progress) => {
+            pushSSE(taskId, 'progress', {
+              percent: 50 + Math.floor(progress.percent / 2),
+              stage: 'converting',
+            });
+          },
+        );
+
+        const [duration, stat] = await Promise.all([
+          getAudioDuration(outputPath),
+          Promise.resolve(fs.statSync(outputPath)),
+        ]);
+
+        createHistory({
+          user_id: params.userId,
+          task_id: taskId,
+          file_id: fileId,
+          original_name: params.url,
+          format: params.format,
+          file_size: stat.size,
+          duration,
+        });
+
+        updateTaskStatus(taskId, 'done', fileId);
+        pushSSE(taskId, 'done', { fileId });
+        closeSSEClients(taskId);
+
+      } catch (err) {
+        const message = err instanceof Error ? err.message : '转换失败';
+        updateTaskStatus(taskId, 'error', undefined, message);
+        pushSSE(taskId, 'error', { message });
+        closeSSEClients(taskId);
+      } finally {
+        cleanupTmpDir(tmpDir);
       }
-
-      updateTaskStatus(taskId, 'processing');
-
-      await convertToAudio(
-        downloadedPath,
-        outputPath,
-        params.format,
-        (progress) => {
-          pushSSE(taskId, 'progress', {
-            percent: 50 + Math.floor(progress.percent / 2),
-            stage: 'converting',
-          });
-        },
-      );
-
-      const [duration, stat] = await Promise.all([
-        getAudioDuration(outputPath),
-        Promise.resolve(fs.statSync(outputPath)),
-      ]);
-
-      createHistory({
-        user_id: params.userId,
-        task_id: taskId,
-        file_id: fileId,
-        original_name: params.url,
-        format: params.format,
-        file_size: stat.size,
-        duration,
-      });
-
-      updateTaskStatus(taskId, 'done', fileId);
-      pushSSE(taskId, 'done', { fileId });
-      closeSSEClients(taskId);
-
-    } catch (err) {
-      const message = err instanceof Error ? err.message : '转换失败';
-      updateTaskStatus(taskId, 'error', undefined, message);
-      pushSSE(taskId, 'error', { message });
-      closeSSEClients(taskId);
-    } finally {
-      cleanupTmpDir(tmpDir);
-    }
+    },
   });
 
   return taskId;
@@ -233,6 +167,8 @@ export async function submitUrlTask(params: {
 /**
  * 触发文件上传后的转码任务
  * inputPath 是分片合并后的完整视频文件路径
+ *
+ * @throws 单用户并发超限时直接抛出，由 Controller 返回 429
  */
 export async function submitUploadTask(params: {
   userId: number;
@@ -250,16 +186,70 @@ export async function submitUploadTask(params: {
     format: params.format,
   });
 
-  // 异步执行转码
-  setImmediate(() => {
-    runConvert({
-      taskId,
-      userId: params.userId,
-      source: params.filename,
-      inputPath: params.inputPath,
-      format: params.format,
-      isUrlMode: false,
-    });
+  submitToQueue({
+    taskId,
+    userId: params.userId,
+    onQueued: () => {
+      setTimeout(() => {
+        pushSSE(taskId, 'queued', { message: '任务已排队，等待执行...' });
+      }, 300);
+    },
+    run: async () => {
+      const { taskId: tid, userId, filename, inputPath, format } = {
+        taskId,
+        ...params,
+      };
+      const fileId = uuidv4();
+      const outputPath = getFilePath(fileId, format);
+
+      if (!fs.existsSync(FILES_DIR)) {
+        fs.mkdirSync(FILES_DIR, { recursive: true });
+      }
+
+      try {
+        updateTaskStatus(tid, 'processing');
+
+        await convertToAudio(
+          inputPath,
+          outputPath,
+          format,
+          (progress) => {
+            pushSSE(tid, 'progress', {
+              percent: progress.percent,
+              stage: 'converting',
+            });
+          },
+        );
+
+        const [duration, stat] = await Promise.all([
+          getAudioDuration(outputPath),
+          Promise.resolve(fs.statSync(outputPath)),
+        ]);
+
+        createHistory({
+          user_id: userId,
+          task_id: tid,
+          file_id: fileId,
+          original_name: filename,
+          format,
+          file_size: stat.size,
+          duration,
+        });
+
+        updateTaskStatus(tid, 'done', fileId);
+        pushSSE(tid, 'done', { fileId });
+        closeSSEClients(tid);
+
+      } catch (err) {
+        const message = err instanceof Error ? err.message : '转换失败';
+        updateTaskStatus(tid, 'error', undefined, message);
+        pushSSE(tid, 'error', { message });
+        closeSSEClients(tid);
+      } finally {
+        // 清理分片合并的临时文件
+        cleanupTmpDir(path.dirname(inputPath));
+      }
+    },
   });
 
   return taskId;

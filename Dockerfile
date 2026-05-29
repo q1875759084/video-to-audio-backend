@@ -3,7 +3,7 @@ FROM node:20-alpine AS builder
 
 WORKDIR /app
 
-COPY package.json package-lock.json ./
+COPY package.json ./
 RUN npm install
 
 COPY . .
@@ -23,7 +23,7 @@ RUN apk add --no-cache ffmpeg python3 py3-pip \
   && yt-dlp --version
 
 # 只安装生产依赖
-COPY package.json package-lock.json ./
+COPY package.json ./
 RUN npm install --omit=dev
 
 # 从构建阶段复制编译产物

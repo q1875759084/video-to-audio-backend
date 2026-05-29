@@ -75,7 +75,9 @@ async function downloadViaDirect(
       '--socket-timeout', '30',
       '--user-agent', 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
       '--add-header', 'Accept-Language:zh-CN,zh;q=0.9,en;q=0.8',
-    ], { timeout: 60000 }, (err, stdout, stderr) => {
+    // execFile timeout = 35s：比 socket-timeout(30s) 略长，给握手和重试留余量
+    // -g 只获取直链，正常 <5s 完成，超时说明代理不可用，尽早失败释放并发槽位
+    ], { timeout: 35000 }, (err, stdout, stderr) => {
       if (err) {
         reject(new Error(`yt-dlp -g 失败: ${stderr || err.message}`));
         return;

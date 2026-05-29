@@ -23,14 +23,17 @@ export function initUserTable(): void {
   console.log('✅ users 表初始化完成');
 }
 
-/** 写入预设账号（初期硬编码，已存在则跳过）*/
+/** 写入预设账号（已存在则跳过）
+ *
+ * 试验阶段无注册功能，账号直接写死在代码里。
+ * 待后续支持正式注册流程后，此函数可整体删除。
+ */
 export async function seedPresetUsers(): Promise<void> {
-  // 预设账号从环境变量读取，未配置时使用默认值（仅开发用）
   const presets = [
     {
-      username: process.env.PRESET_USER_1 || 'admin',
-      password: process.env.PRESET_PASS_1 || 'changeme123',
-      nickname: process.env.PRESET_NICK_1 || '管理员',
+      username: 'admin',
+      password: 'admin123',
+      nickname: '管理员',
     },
   ];
 

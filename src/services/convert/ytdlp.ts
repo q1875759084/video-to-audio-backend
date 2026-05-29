@@ -27,7 +27,9 @@ async function getKdlProxy(): Promise<string> {
   if (json.code !== 0) throw new Error(`快代理 API 返回错误: ${json.msg}`);
 
   const { ip, port } = json.data;
-  return `http://${proxyUser}:${proxyPass}@${ip}:${port}`;
+  // 使用 socks5 协议：HTTP 代理不支持 HTTPS CONNECT 隧道（返回 503），
+  // SOCKS5 工作在传输层，天然支持 HTTP/HTTPS，B 站等 HTTPS 网站必须用 socks5://
+  return `socks5://${proxyUser}:${proxyPass}@${ip}:${port}`;
 }
 
 /**

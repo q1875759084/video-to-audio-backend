@@ -9,6 +9,33 @@ import { getUploadTmpDir } from '../../utils/cleanup.js';
 import { getTask, getTasksByIds } from '../../database/task/index.js';
 import { getActiveTaskIds } from '../../services/convert/queue.js';
 
+/**
+ * 从用户粘贴的文本中提取第一个有效 URL。
+ *
+ * 用户可能粘贴以下几种形式：
+ *  - 纯链接：https://www.bilibili.com/video/BV1qp4y1v7Rn/
+ *  - PC 分享：【【官方MV】田馥甄-悬日】 https://www.bilibili.com/video/BV1qp4y1v7Rn/...
+ *  - APP 分享：【【官方MV】田馥甄-悬日-哔哩哔哩】 https://b23.tv/7zzjrYh
+ *
+ * 策略：用正则扫描文本，取第一个 http(s):// 开头、由空白或常见中文标点结尾的串。
+ */
+function extractUrl(input: string): string | null {
+  // 匹配 http(s):// 开头，到空白字符或行尾为止
+  const match = input.match(/https?:\/\/[^\s\u3000-\u303f\uff00-\uffef]+/);
+  if (!match) return null;
+
+  // 去除末尾可能残留的标点（句号、引号等）
+  const url = match[0].replace(/[。，、？！""''）】\)\]]+$/, '');
+
+  // 基本合法性检查
+  try {
+    new URL(url);
+    return url;
+  } catch {
+    return null;
+  }
+}
+
 // multer 配置：分片上传，单片最大 10MB
 const chunkUpload = multer({
   limits: { fileSize: 10 * 1024 * 1024 },
@@ -27,9 +54,19 @@ class ConvertController {
         return fail(res, 400, '不支持的输出格式，请选择 mp3/aac/wav');
       }
 
+      // 从用户粘贴的内容中提取真实 URL
+      // 兼容以下情形：
+      //   1. 纯 URL：https://www.bilibili.com/video/BV1qp4y1v7Rn/...
+      //   2. PC 分享文本：【标题】 https://...
+      //   3. APP 分享文本：【标题-哔哩哔哩】 https://b23.tv/xxx
+      const extractedUrl = extractUrl(url.trim());
+      if (!extractedUrl) {
+        return fail(res, 400, '未能识别有效的视频链接，请直接粘贴链接地址');
+      }
+
       const taskId = await submitUrlTask({
         userId: req.userId!,
-        url: url.trim(),
+        url: extractedUrl,
         format,
       });
 

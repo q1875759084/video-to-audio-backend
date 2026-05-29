@@ -12,6 +12,9 @@ dist/
 database/*.db
 database/*.db-shm
 database/*.db-wal
+database/*.sqlite3
+database/*.sqlite3-shm
+database/*.sqlite3-wal
 
 # Uploaded/converted files
 files/

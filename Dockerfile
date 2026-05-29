@@ -27,8 +27,10 @@ RUN apk add --no-cache ffmpeg python3 py3-pip \
   && yt-dlp --version
 
 # 只安装生产依赖
+# better-sqlite3 需要 node-gyp 编译，alpine 须先装构建工具链，装完删除以控制镜像体积
+RUN apk add --no-cache python3 make g++
 COPY package.json package-lock.json ./
-RUN npm ci --omit=dev
+RUN npm ci --omit=dev && apk del make g++
 
 # 从构建阶段复制编译产物
 COPY --from=builder /app/dist ./dist

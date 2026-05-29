@@ -3,6 +3,33 @@ import path from 'path';
 import fs from 'fs';
 import { getTaskTmpDir } from '../../utils/cleanup.js';
 
+/**
+ * 通过快代理 API 动态获取当前有效的独享代理地址。
+ *
+ * 独享代理（纯生版动态型）的 IP 每天自然失效后会自动分配新 IP，
+ * 因此不能硬编码 IP，每次启动 yt-dlp 前先调 API 获取当前 IP。
+ *
+ * API 文档：https://www.kuaidaili.com/doc/api/getkpsbyid/
+ * 鉴权方式：密钥明文验证（signature 直接填 SecretKey）
+ */
+async function getKdlProxy(): Promise<string> {
+  const secretId = process.env.KDL_SECRET_ID ?? 'owjk4o8w9k62dibs8hfz';
+  const signature = process.env.KDL_SIGNATURE ?? 'mgr1wjzfu3g8dmn3lnmnk1qjomrtfnno';
+  const fId = process.env.KDL_F_ID ?? 'lrps-419156';
+  const proxyUser = process.env.KDL_PROXY_USER ?? 'pmgqqvfy';
+  const proxyPass = process.env.KDL_PROXY_PASS ?? 'wwrslolq';
+
+  const url = `https://kps.kdlapi.com/api/getkpsbyid?secret_id=${secretId}&signature=${signature}&f_id=${fId}`;
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`快代理 API 请求失败: ${res.status}`);
+
+  const json = await res.json() as { code: number; msg: string; data: { ip: string; port: string } };
+  if (json.code !== 0) throw new Error(`快代理 API 返回错误: ${json.msg}`);
+
+  const { ip, port } = json.data;
+  return `http://${proxyUser}:${proxyPass}@${ip}:${port}`;
+}
+
 export interface YtdlpProgress {
   percent: number;  // 0-100
 }
@@ -32,6 +59,9 @@ export async function downloadWithYtdlp(
   // 输出模板：统一命名为 source.%(ext)s
   const outputTemplate = path.join(tmpDir, 'source.%(ext)s');
 
+  // 动态获取当前有效的代理地址（IP 每天自然失效后快代理自动换新 IP）
+  const proxy = await getKdlProxy();
+
   return new Promise((resolve, reject) => {
     // yt-dlp 参数说明：
     // --no-playlist：只下载单个视频，不下载整个播放列表
@@ -39,8 +69,7 @@ export async function downloadWithYtdlp(
     // --newline：每个进度更新单独一行，便于解析
     // --user-agent：伪装成真实浏览器，降低被平台识别为爬虫的风险
     // --add-header：补充 Accept-Language，模拟正常浏览器请求特征
-    // --proxy：国内运营商原生 IP 代理，绕过 B 站对云服务商数据中心 IP 的 412 拦截
-    //   TODO: 代理 IP 为动态型，每天自动更换，后续改为通过快代理 API 动态获取当前 IP
+    // --proxy：国内运营商原生 IP（快代理独享纯生版），绕过 B 站对云服务商数据中心 IP 的 412 拦截
     const args = [
       url,
       '-o', outputTemplate,
@@ -50,7 +79,7 @@ export async function downloadWithYtdlp(
       '--no-warnings',
       '--user-agent', 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
       '--add-header', 'Accept-Language:zh-CN,zh;q=0.9,en;q=0.8',
-      '--proxy', 'http://pmgqqvfy:wwrslolq@58.19.54.132:10803',
+      '--proxy', proxy,
     ];
 
     const proc = spawn('yt-dlp', args);

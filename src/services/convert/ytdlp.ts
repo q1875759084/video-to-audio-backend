@@ -56,6 +56,14 @@ async function downloadViaDirect(
   onProgress: (progress: YtdlpProgress) => void,
 ): Promise<void> {
   // Step 1: 通过代理获取真实 CDN 直链（-g 只输出 URL，不下载）
+  //
+  // 代理协议选择：
+  // - socks5://  → Python urllib 本地 DNS 解析后传 IP，代理 ACL 拒绝裸 IP 访问 → Errno 4
+  // - socks5h:// → 代理服务器做 DNS 解析（等价 curl --socks5-hostname），可绕过 ACL 问题
+  //   但 Python 的 socks5h 实现有时会超时，因此加大 socket_timeout
+  // 将 socks5:// 替换为 socks5h://，让代理服务器解析域名而非本地解析
+  const socks5hProxy = proxy.replace(/^socks5:\/\//, 'socks5h://');
+
   const directUrl = await new Promise<string>((resolve, reject) => {
     execFile('yt-dlp', [
       url,
@@ -63,10 +71,11 @@ async function downloadViaDirect(
       '--no-playlist',
       '-f', 'bestaudio/best',
       '--no-warnings',
-      '--proxy', proxy,
+      '--proxy', socks5hProxy,
+      '--socket-timeout', '30',
       '--user-agent', 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
       '--add-header', 'Accept-Language:zh-CN,zh;q=0.9,en;q=0.8',
-    ], (err, stdout, stderr) => {
+    ], { timeout: 60000 }, (err, stdout, stderr) => {
       if (err) {
         reject(new Error(`yt-dlp -g 失败: ${stderr || err.message}`));
         return;

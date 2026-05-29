@@ -30,11 +30,9 @@ export function initUserTable(): void {
  */
 export async function seedPresetUsers(): Promise<void> {
   const presets = [
-    {
-      username: 'admin',
-      password: 'admin123',
-      nickname: '管理员',
-    },
+    { username: 'cmj', password: 'cmj0531', nickname: 'cmj' },
+    { username: 'ndy', password: 'ndy1224', nickname: 'ndy' },
+    { username: 'mjiang', password: 'im2b', nickname: 'mjiang' },
   ];
 
   for (const preset of presets) {

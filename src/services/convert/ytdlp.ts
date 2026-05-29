@@ -38,8 +38,9 @@ export async function downloadWithYtdlp(
     // -f bestaudio/best：优先下载最佳音频流，无音频则取最佳视频流（ffmpeg 后续提取音频）
     // --newline：每个进度更新单独一行，便于解析
     // --user-agent：伪装成真实浏览器，降低被平台识别为爬虫的风险
-    // --referer：部分平台（如 B 站）校验 Referer，设置为平台域名可绕过
     // --add-header：补充 Accept-Language，模拟正常浏览器请求特征
+    // --proxy：国内运营商原生 IP 代理，绕过 B 站对云服务商数据中心 IP 的 412 拦截
+    //   TODO: 代理 IP 为动态型，每天自动更换，后续改为通过快代理 API 动态获取当前 IP
     const args = [
       url,
       '-o', outputTemplate,
@@ -49,6 +50,7 @@ export async function downloadWithYtdlp(
       '--no-warnings',
       '--user-agent', 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
       '--add-header', 'Accept-Language:zh-CN,zh;q=0.9,en;q=0.8',
+      '--proxy', 'http://pmgqqvfy:wwrslolq@58.19.54.132:10803',
     ];
 
     const proc = spawn('yt-dlp', args);

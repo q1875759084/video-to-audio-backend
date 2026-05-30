@@ -13,9 +13,9 @@ import { getTaskTmpDir } from '../../utils/cleanup.js';
  * 鉴权方式：密钥明文验证（signature 直接填 SecretKey）
  */
 async function getKdlProxy(): Promise<string> {
-  const secretId = process.env.KDL_SECRET_ID ?? 'owjk4o8w9k62dibs8hfz';
-  const signature = process.env.KDL_SIGNATURE ?? 'mgr1wjzfu3g8dmn3lnmnk1qjomrtfnno';
-  const fId = process.env.KDL_F_ID ?? 'lrps-419156';
+  const secretId = process.env.KDL_SECRET_ID ?? 'ordb31uhqm711vequbmm';
+  const signature = process.env.KDL_SIGNATURE ?? 'glv6cjnsq7xym75vuj7nbm0dbbxlqi0l';
+  const fId = process.env.KDL_F_ID ?? 'lrps-719161';
   const proxyUser = process.env.KDL_PROXY_USER ?? 'pmgqqvfy';
   const proxyPass = process.env.KDL_PROXY_PASS ?? 'wwrslolq';
 

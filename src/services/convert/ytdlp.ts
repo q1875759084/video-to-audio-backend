@@ -96,12 +96,16 @@ async function downloadViaDirect(
 
   // Step 2: 直连下载（不走代理），上报进度
   await new Promise<void>((resolve, reject) => {
-    // wget 的进度格式：... 45% 1.23MB/s
+    // B 站 CDN 会校验 User-Agent 和 Referer，wget 默认 UA（Wget/x.x）会被 403 拒绝
+    // 需要伪装成浏览器并带上 Referer，与 yt-dlp 获取直链时使用的 UA 保持一致
     const proc = spawn('wget', [
       '-O', outputPath,
       '--no-verbose',
       '--show-progress',
       '--progress=dot:mega',
+      '--user-agent', 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+      '--header', 'Referer: https://www.bilibili.com/',
+      '--header', 'Accept-Language: zh-CN,zh;q=0.9,en;q=0.8',
       directUrl,
     ]);
 

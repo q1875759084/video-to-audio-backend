@@ -84,8 +84,20 @@ class FileController {
     }
 
     const filename = `audio_${fileId.slice(0, 8)}.${format}`;
-    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
-    res.setHeader('Content-Type', 'application/octet-stream');
+    const mimeTypes: Record<string, string> = {
+      mp3: 'audio/mpeg',
+      aac: 'audio/aac',
+      wav: 'audio/wav',
+    };
+    const contentType = mimeTypes[format] || 'application/octet-stream';
+    const stat = fs.statSync(filePath);
+
+    // Content-Type 使用正确的音频 MIME 类型，而非 application/octet-stream
+    // 原因：iOS Safari 收到 octet-stream 时无法识别文件类型，导致保存的文件无扩展名或类型错误
+    // filename* 使用 RFC 5987 编码，确保中文/特殊字符文件名在各端正确显示
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"; filename*=UTF-8''${encodeURIComponent(filename)}`);
+    res.setHeader('Content-Type', contentType);
+    res.setHeader('Content-Length', stat.size);
 
     fs.createReadStream(filePath).pipe(res);
   }

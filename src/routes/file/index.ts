@@ -1,12 +1,10 @@
 import { Router } from 'express';
 import FileController from '../../controllers/file/index.js';
-import { authMiddleware, fileDownloadAuthMiddleware } from '../../middleware/auth.js';
 
 const router = Router();
 
-// preview：仅支持 Authorization header（fetch + Blob URL 场景）
-router.get('/:fileId/preview', authMiddleware, (req, res) => FileController.preview(req, res));
-// download：支持 header 和 query token，允许浏览器原生下载（window.location.href）
-router.get('/:fileId/download', fileDownloadAuthMiddleware, (req, res) => FileController.download(req, res));
+// fileId 本身是 UUID（128 位随机），知道链接即可访问，无需额外鉴权（capability URL 模式）
+router.get('/:fileId/preview', (req, res) => FileController.preview(req, res));
+router.get('/:fileId/download', (req, res) => FileController.download(req, res));
 
 export default router;
